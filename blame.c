@@ -31,36 +31,23 @@ void (*old_error_cb) (int type, const char *filenm, uint lineno,
 char *
 who_deserves_blame (const char *filename, uint lineno)
 {
-  char *guilty = 0;
+  char buf[128];
   char cmd[512];
-  zval *inp = 0, *rval = 0, *fun = 0, **inpp = &inp;
+  char *guilty = NULL;
+  FILE* fp;
+  size_t rv;
 
-  TSRMLS_FETCH ();
-
-  sprintf (cmd, "(git blame -L%d,+1 --porcelain %s | sed -n 2p | sed s/'author '//) 2>/dev/null", lineno, filename);
-
-  MAKE_STD_ZVAL (inp);
-  ZVAL_STRING (inp, cmd, 1);
-
-  MAKE_STD_ZVAL (fun);
-  ZVAL_STRING (fun, "shell_exec", 1);
-
-  if (SUCCESS == call_user_function_ex (EG (function_table), 0, fun, &rval, 1, &inpp, 0, 0 TSRMLS_CC)) {
-    if (rval && (IS_STRING == Z_TYPE_P (rval))) {
-      int len = Z_STRLEN_P (rval);
-
-      guilty = emalloc (len + 1);
-
-      strncpy (guilty, Z_STRVAL_P (rval), len);
-      if (guilty[len - 1] == '\n') {
-        guilty[len - 1] = '\0';
-      }
+  sprintf (cmd, "git blame -L%d,+1 --porcelain %s 2>/dev/null | sed -n 2p | sed s/'author '// | tr -d '\n'", lineno, filename);
+  fp = popen (cmd, "r");
+  if (fp) {
+    rv = fread (&buf, 1, sizeof (buf) - 1, fp);
+    if (rv > 0) {
+      guilty = ecalloc (rv + 1, 1);
+      memcpy (guilty, buf, rv);
     }
-    zval_ptr_dtor (&rval);
-  }
 
-  zval_ptr_dtor (&inp);
-  zval_ptr_dtor (&fun);
+    pclose (fp);
+  }
 
   return guilty;
 }
