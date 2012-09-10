@@ -35,15 +35,14 @@ who_deserves_blame (const char *filename, uint lineno)
   char cmd[512];
   char *guilty = NULL;
   FILE* fp;
-  size_t rv;
 
   sprintf (cmd, "git blame -L%d,+1 --porcelain %s 2>/dev/null | sed -n 2p | sed s/'author '// | tr -d '\n'", lineno, filename);
   fp = popen (cmd, "r");
   if (fp) {
-    rv = fread (&buf, 1, sizeof (buf) - 1, fp);
+    size_t rv = fread (&buf, 1, sizeof (buf) - 1, fp);
+
     if (rv > 0) {
-      guilty = ecalloc (rv + 1, 1);
-      memcpy (guilty, buf, rv);
+      guilty = estrndup (buf, rv);
     }
 
     pclose (fp);
