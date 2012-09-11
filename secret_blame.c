@@ -27,7 +27,8 @@ ZEND_GET_MODULE (secret_blame)
 
 void (*old_error_cb) (int type, const char *filenm, uint lineno,
   const char *fmt, va_list args);
-
+int replaced_extension_loaded = 0;
+void (*orig_extension_loaded) (INTERNAL_FUNCTION_PARAMETERS);
 
 char *
 who_deserves_blame (const char *filename, uint lineno)
@@ -51,9 +52,6 @@ who_deserves_blame (const char *filename, uint lineno)
 
   return guilty;
 }
-
-int replaced_extension_loaded = 0;
-void (*orig_extension_loaded) (INTERNAL_FUNCTION_PARAMETERS);
 
 static void
 new_extension_loaded (INTERNAL_FUNCTION_PARAMETERS)
@@ -108,13 +106,31 @@ secret_blame_error_cb (int type, const char *error_filename, uint error_lineno, 
   }
 }
 
+static char *
+remove_if_present (char *buf, int buflen, char *fragment, int fragmentlen)
+{
+  char *out = NULL;
+  char *found = php_memnstr (buf, fragment, fragmentlen, buf + buflen);
+
+  if (found) {
+    out = emalloc (buflen - fragmentlen);
+
+    strncpy (out, buf, found - buf);
+    strncpy (out + (found - buf), found + fragmentlen, (buf + buflen) - (found + fragmentlen));
+  }
+
+  return out;
+}
+
+char htmlfrag[] = "<h2><a name=\"module_secret_blame\">secret_blame</a></h2>\n";
+char clifrag[] = "secret_blame\n";
+#define htmlfraglen (sizeof (htmlfrag) - 1)
+#define clifraglen (sizeof (clifrag) - 1)
+
 static void
 secret_blame_output_handler (char *output, uint output_len, char **handled_output, uint *handled_output_len, int mode TSRMLS_DC)
 {
-  char *found = NULL;
-  char cmd[128];
-  const char *sb = "secret_blame\n";
-  int sblen = sizeof ("secret_blame\n") - 1;
+  char *out = NULL;
 
   *handled_output = NULL;
 
@@ -122,18 +138,18 @@ secret_blame_output_handler (char *output, uint output_len, char **handled_outpu
     return;
   }
 
-  found = php_memnstr (output, sb, sblen, output + output_len);
-
-  if (found) {
-    int before_len = found - output;
-    int after_len = output_len - before_len - sblen;
-    char* out = emalloc (before_len + after_len);
-
-    strncpy (out, output, before_len);
-    strncpy (out + before_len, found + sblen, after_len);
-
+  out = remove_if_present (output, output_len, htmlfrag, htmlfraglen);
+  if (out) {
     *handled_output = out;
-    *handled_output_len = before_len + after_len;
+    *handled_output_len = output_len - htmlfraglen;
+    return;
+  }
+
+  out = remove_if_present (output, output_len, clifrag, clifraglen);
+  if (out) {
+    *handled_output = out;
+    *handled_output_len = output_len - clifraglen;
+    return;
   }
 }
 
