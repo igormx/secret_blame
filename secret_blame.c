@@ -10,7 +10,7 @@ zend_module_entry secret_blame_module_entry = {
 #endif
   PHP_SECRET_BLAME_EXTNAME,
   NULL,
-  PHP_MINIT (secret_blame),
+  NULL,
   NULL,
   PHP_RINIT (secret_blame),
   NULL,
@@ -25,10 +25,9 @@ zend_module_entry secret_blame_module_entry = {
 ZEND_GET_MODULE (secret_blame)
 #endif
 
-void (*old_error_cb) (int type, const char *filenm, uint lineno,
-  const char *fmt, va_list args);
-int replaced_extension_loaded = 0;
+void (*orig_error_cb) (int type, const char *filenm, uint lineno, const char *fmt, va_list args);
 void (*orig_extension_loaded) (INTERNAL_FUNCTION_PARAMETERS);
+void (*orig_get_loaded_extensions) (INTERNAL_FUNCTION_PARAMETERS);
 
 char *
 who_deserves_blame (const char *filename, uint lineno)
@@ -53,6 +52,9 @@ who_deserves_blame (const char *filename, uint lineno)
   return guilty;
 }
 
+const char ext_name[] = "secret_blame";
+int ext_name_length = sizeof (ext_name) - 1;
+
 static void
 new_extension_loaded (INTERNAL_FUNCTION_PARAMETERS)
 {
@@ -62,7 +64,7 @@ new_extension_loaded (INTERNAL_FUNCTION_PARAMETERS)
   if (SUCCESS == zend_parse_parameters_ex (ZEND_PARSE_PARAMS_QUIET,
       ZEND_NUM_ARGS () TSRMLS_CC, "s", &str, &len)) {
 
-    if (len && str && (0 == strncmp (str, "secret_blame", len))) {
+    if (len && str && (0 == strncmp (str, ext_name, len))) {
       RETURN_FALSE;
     }
   }
@@ -70,21 +72,46 @@ new_extension_loaded (INTERNAL_FUNCTION_PARAMETERS)
   orig_extension_loaded (INTERNAL_FUNCTION_PARAM_PASSTHRU);
 }
 
-void
-replace_extension_loaded (TSRMLS_D)
+static int
+loaded_extensions_iter (zval **ext TSRMLS_DC)
 {
-  zend_function **efn;
-
-  if (!replaced_extension_loaded) {
-    if (SUCCESS == zend_hash_find (EG (function_table), "extension_loaded",
-                                   sizeof ("extension_loaded"), (void **)&efn)) {
-
-     orig_extension_loaded = ((zend_internal_function *) efn)->handler;
-
-      ((zend_internal_function *) efn)->handler = &new_extension_loaded;
+  if ((IS_STRING == Z_TYPE_PP (ext)) && (ext_name_length == Z_STRLEN_PP (ext))) {
+    if (0 == memcmp (ext_name, Z_STRVAL_PP (ext), ext_name_length)) {
+      return ZEND_HASH_APPLY_REMOVE|ZEND_HASH_APPLY_STOP;
     }
-    replaced_extension_loaded = 1;
   }
+  return ZEND_HASH_APPLY_KEEP;
+}
+
+static void
+new_get_loaded_extensions (INTERNAL_FUNCTION_PARAMETERS)
+{
+  orig_get_loaded_extensions (INTERNAL_FUNCTION_PARAM_PASSTHRU);
+
+  if (IS_ARRAY == Z_TYPE_P (return_value)) {
+    zend_hash_apply (Z_ARRVAL_P (return_value), (apply_func_t)loaded_extensions_iter TSRMLS_CC);
+  }
+
+}
+
+static int
+replace_internal_function (const char *name, void (*replacement)(INTERNAL_FUNCTION_PARAMETERS),
+                           void (**store_original)(INTERNAL_FUNCTION_PARAMETERS))
+{
+  zend_function **fn;
+
+  if (name && replacement) {
+    if (SUCCESS == zend_hash_find (EG (function_table), name, strlen (name) + 1, (void **)&fn)) {
+      if (store_original) {
+        *store_original = ((zend_internal_function *) fn)->handler;
+      }
+
+      ((zend_internal_function *) fn)->handler = replacement;
+      return SUCCESS;
+    }
+  }
+
+  return FAILURE;
 }
 
 static void
@@ -97,12 +124,12 @@ secret_blame_error_cb (int type, const char *error_filename, uint error_lineno, 
 
     sprintf (fmt, "guilty: %s: %s", guilty, format);
 
-    old_error_cb (type, error_filename, error_lineno, fmt, args);
+    orig_error_cb (type, error_filename, error_lineno, fmt, args);
 
     efree (guilty);
     efree (fmt);
   } else {
-    old_error_cb (type, error_filename, error_lineno, format, args);
+    orig_error_cb (type, error_filename, error_lineno, format, args);
   }
 }
 
@@ -138,14 +165,14 @@ secret_blame_output_handler (char *output, uint output_len, char **handled_outpu
     return;
   }
 
-  out = remove_if_present (output, output_len, htmlfrag, htmlfraglen);
+  out = remove_if_present (output, output_len, htmlfrag, sizeof (htmlfrag) - 1);
   if (out) {
     *handled_output = out;
     *handled_output_len = output_len - htmlfraglen;
     return;
   }
 
-  out = remove_if_present (output, output_len, clifrag, clifraglen);
+  out = remove_if_present (output, output_len, clifrag, sizeof (clifrag) - 1);
   if (out) {
     *handled_output = out;
     *handled_output_len = output_len - clifraglen;
@@ -153,25 +180,20 @@ secret_blame_output_handler (char *output, uint output_len, char **handled_outpu
   }
 }
 
-PHP_MINIT_FUNCTION (secret_blame)
-{
-  old_error_cb = zend_error_cb;
-  zend_error_cb = secret_blame_error_cb;
-
-  return SUCCESS;
-}
+int done_replacement = 0;
 
 PHP_RINIT_FUNCTION (secret_blame)
 {
-  replace_extension_loaded (TSRMLS_C);
-
   php_output_start_internal (ZEND_STRL ("default output handler"), secret_blame_output_handler, (size_t)40960, PHP_OUTPUT_HANDLER_STDFLAGS TSRMLS_CC);
 
+  if (0 == done_replacement) {
+    orig_error_cb = zend_error_cb;
+    zend_error_cb = secret_blame_error_cb;
+    replace_internal_function ("extension_loaded", &new_extension_loaded, &orig_extension_loaded);
+    replace_internal_function ("get_loaded_extensions", &new_get_loaded_extensions, &orig_get_loaded_extensions);
+    done_replacement = 1;
+  }
   return SUCCESS;
-}
-
-PHP_MINFO_FUNCTION (secret_blame)
-{
 }
 
 
