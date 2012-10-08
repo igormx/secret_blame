@@ -196,4 +196,7 @@ PHP_RINIT_FUNCTION (secret_blame)
   return SUCCESS;
 }
 
+PHP_MINFO_FUNCTION (secret_blame)
+{
+}
 
