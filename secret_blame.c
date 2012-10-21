@@ -1,7 +1,3 @@
-#ifdef HAVE_CONFIG_H
-#include "config.h"
-#endif
-#include "php.h"
 #include "secret_blame.h"
 
 zend_module_entry secret_blame_module_entry = {
@@ -14,9 +10,9 @@ zend_module_entry secret_blame_module_entry = {
 	PHP_MSHUTDOWN(secret_blame),  /* Module Shutdown */
 	PHP_RINIT(secret_blame),      /* Request Initialization */
 	NULL,                         /* Request Shutdown */
-	NULL,                         /* Module Information (PHP_MINFO) */
+	NULL,                         /* Module Information */
 #if ZEND_MODULE_API_NO >= 20010901
-	NULL,                         /* Version Information (PHP_SECRET_BLAME_VERSION) */
+	NULL,                         /* Version Information */
 #endif
 	STANDARD_MODULE_PROPERTIES
 };
@@ -30,12 +26,15 @@ ZEND_DECLARE_MODULE_GLOBALS(secret_blame);
 static void
 new_extension_loaded(INTERNAL_FUNCTION_PARAMETERS)
 {
-	int len = 0;
+	int rv, len = 0;
 	char *str = 0;
 
-	if ((SUCCESS == zend_parse_parameters_ex(ZEND_PARSE_PARAMS_QUIET, ZEND_NUM_ARGS() TSRMLS_CC, "s", &str, &len)) &&
-	    (sizeof("secret_blame") - 1 == len) &&
-	    (0 == memcmp(str, "secret_blame", sizeof("secret_blame") - 1))) {
+	rv = zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &str, &len);
+	if (FAILURE == rv) {
+		RETURN_FALSE;
+	}
+
+	if (0 == strncmp(str, "secret_blame", len)) {
 		RETURN_FALSE;
 	}
 
@@ -43,12 +42,10 @@ new_extension_loaded(INTERNAL_FUNCTION_PARAMETERS)
 }
 
 static int
-remove_sb_from_hash(zval **ext TSRMLS_DC)
+remove_sb(zval **ext TSRMLS_DC)
 {
 	if ((IS_STRING == Z_TYPE_PP(ext)) &&
-	    (sizeof("secret_blame") - 1 == Z_STRLEN_PP(ext)) &&
-	    (0 == memcmp("secret_blame", Z_STRVAL_PP(ext), sizeof("secret_blame") - 1))) {
-
+		(0 == strncmp(Z_STRVAL_PP(ext), "secret_blame", Z_STRLEN_PP(ext)))) {
 		return ZEND_HASH_APPLY_REMOVE|ZEND_HASH_APPLY_STOP;
 	}
 	return ZEND_HASH_APPLY_KEEP;
@@ -60,13 +57,13 @@ new_get_loaded_extensions(INTERNAL_FUNCTION_PARAMETERS)
 	SECRET_BLAME_G(orig_get_loaded_extensions)(INTERNAL_FUNCTION_PARAM_PASSTHRU);
 
 	if (IS_ARRAY == Z_TYPE_P(return_value)) {
-		zend_hash_apply(Z_ARRVAL_P(return_value), (apply_func_t)remove_sb_from_hash TSRMLS_CC);
+		zend_hash_apply(Z_ARRVAL_P(return_value), (apply_func_t)remove_sb TSRMLS_CC);
 	}
 }
 
 static void
 replace_internal_fn(const char *name, void (*replacement)(INTERNAL_FUNCTION_PARAMETERS),
-					 void (**store_original)(INTERNAL_FUNCTION_PARAMETERS) TSRMLS_DC)
+					void (**store_original)(INTERNAL_FUNCTION_PARAMETERS) TSRMLS_DC)
 {
 	zend_internal_function *fn;
 
@@ -157,9 +154,9 @@ secret_blame_handler(char *buf, uint buflen,
 }
 
 static void
-secret_blame_init_globals(zend_secret_blame_globals *secret_blame_globals)
+sb_init_globals(zend_secret_blame_globals *globals)
 {
-	secret_blame_globals->done_replacement = 0;
+	globals->done_replacement = 0;
 }
 
 PHP_MINIT_FUNCTION(secret_blame)
@@ -167,7 +164,7 @@ PHP_MINIT_FUNCTION(secret_blame)
 	orig_error_cb = zend_error_cb;
 	zend_error_cb = &secret_blame_error_cb;
 
-	ZEND_INIT_MODULE_GLOBALS(secret_blame, secret_blame_init_globals, NULL);
+	ZEND_INIT_MODULE_GLOBALS(secret_blame, sb_init_globals, NULL);
 
 	return SUCCESS;
 }
@@ -176,7 +173,7 @@ PHP_MSHUTDOWN_FUNCTION(secret_blame)
 {
 	zend_error_cb = orig_error_cb;
 
-	return SUCCESS;   
+	return SUCCESS;
 }
 
 PHP_RINIT_FUNCTION(secret_blame)

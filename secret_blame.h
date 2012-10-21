@@ -1,6 +1,11 @@
 #ifndef PHP_SECRET_BLAME_HDR
 #define PHP_SECRET_BLAME_HDR
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+#include "php.h"
+
 #define PHP_SECRET_BLAME_EXTNAME "secret_blame"
 
 extern PHP_MINIT_FUNCTION(secret_blame);
